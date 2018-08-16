@@ -2,6 +2,7 @@ package probe
 
 import (
 	"errors"
+	"github.com/sirupsen/logrus"
 	"time"
 )
 
@@ -25,6 +26,14 @@ func WithFrequency(frequency time.Duration) Option {
 		defer p.processing.Unlock()
 		p.Stop()
 		p.ticker = time.NewTicker(frequency)
+		p.freq = frequency
+		return nil
+	}
+}
+
+func WithLogger(l logrus.StdLogger) Option {
+	return func(p *Probe) error {
+		p.logger = l
 		return nil
 	}
 }

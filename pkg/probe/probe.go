@@ -1,15 +1,20 @@
 package probe
 
 import (
+	"bytes"
+	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sirupsen/logrus"
+	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
-	"github.com/sirupsen/logrus"
-	"fmt"
-	"bytes"
 )
 
+// Probe is an abstraction for a set of basic procedures
+// to carry out to check an endpoint, and to manage the
+// conditions which indicate a successful probe.
 type Probe struct {
 	init       bool
 	processing sync.Mutex
@@ -25,9 +30,14 @@ type Probe struct {
 	ticker   *time.Ticker
 	success  ResultFilter
 
+	logger logrus.StdLogger
+
 	stop chan time.Time
 }
 
+// New is a Probe constructor which makes sure defaults are applied
+// then allows for variadic functional options to be provided
+// to further configure the probe.
 func New(endpoint string, options ...Option) (*Probe, error) {
 	// Generate default struct values
 	p := &Probe{
@@ -37,9 +47,11 @@ func New(endpoint string, options ...Option) (*Probe, error) {
 		method:   "GET",
 		payload:  "",
 		ticker:   time.NewTicker(10 * time.Second),
-		freq:     1 * time.Minute,
+		freq:     10 * time.Second,
 		stop:     make(chan time.Time),
 	}
+
+	p.logger = log.New(os.Stdout, fmt.Sprintf("%s: ", p), 0)
 
 	for _, o := range options {
 		if err := o(p); err != nil {
@@ -56,11 +68,17 @@ func New(endpoint string, options ...Option) (*Probe, error) {
 	})
 	prometheus.MustRegister(p.prom)
 
+	p.logger.Printf("%s: Registered prometheus metric collector", p)
+
 	return p, nil
 }
 
+// Run actually makes the Probe function by starting the
+// ticker. Will return an ErrNotStopped error if already running.
+//
+// Run also triggers run() - the main loop for a Probe's functionality,
+// and starts the first Trigger() call to execute a probe.
 func (p *Probe) Run() error {
-	logrus.Info("Running")
 	if !p.init {
 		return ErrNotInitialised
 	}
@@ -70,10 +88,14 @@ func (p *Probe) Run() error {
 	}
 
 	// Run the main loop in a new goroutine
-	if err := p.Validate(); err != nil{
+	if err := p.Validate(); err != nil {
 		return err
 	}
+
 	go p.run()
+	p.running = true
+
+	p.Trigger()
 
 	return nil
 }
@@ -87,45 +109,23 @@ func (p *Probe) run() {
 	}
 
 	for {
-		logrus.Info("Event loop") // TODO: remove
 		select {
 		case <-p.stop:
 			// Cancellation has been requested
 			p.ticker.Stop()
 			p.running = false
+			p.logger.Printf("%s: Stopped", p)
 			return
 
 		case <-p.ticker.C:
-			// TODO: finish/fix probe check
-
-			p.processing.Lock()
-
-			body:=bytes.NewBufferString(p.payload)
-			req, err := http.NewRequest(p.method, p.endpoint, body)
-			if err != nil {
-				logrus.WithError(err).Error("Creating request")
-				p.processing.Unlock()
-				continue
-			}
-			res, err := p.client.Do(req)
-			if err != nil {
-				logrus.WithError(err).Error("Getting response")
-				p.processing.Unlock()
-				continue //TODO: add prometheus counter for errors
-			}
-
-			probeResult := &Result{
-				Timestamp: time.Now(),
-				Probe: p,
-				Code: res.StatusCode,
-				Headers: res.Header,
-			}
-
-			logrus.Info("Probe check simulation") // TODO: remove
-			p.prom.WithLabelValues(p.endpoint, fmt.Sprintf("%t", p.success.Check(probeResult))).Inc() // TODO: update to use real values
-			p.processing.Unlock()
+			p.Trigger()
 		}
 	}
+}
+
+func (p *Probe) SetLogger(l logrus.StdLogger) {
+	p.logger = l
+	l.Printf("%s: Set logger", p)
 }
 
 // Stop sends a signal to stop further processing
@@ -134,16 +134,63 @@ func (p *Probe) run() {
 //
 // Stop **will block** until it is able to stop successfully.
 func (p *Probe) Stop() error {
-	logrus.Info("Stopping") // TODO: remove
 	if !p.init {
 		return ErrNotInitialised
 	}
 
+	p.logger.Printf("%s: Stopping", p)
+
 	if !p.running {
+		p.logger.Printf("%s: Already stopped", p)
 		return ErrNotRunning
 	}
 
 	p.stop <- time.Now()
+	return nil
+}
+
+func (p *Probe) String() string {
+	return fmt.Sprintf("Probe<%s '%s' every %s>", p.method, p.endpoint, p.freq)
+}
+
+func (p *Probe) Trigger() error {
+	p.processing.Lock()
+	defer p.processing.Unlock()
+
+	if !p.init {
+		return ErrNotInitialised
+	}
+
+	if err := p.Validate(); err != nil {
+		return err
+	}
+
+	p.logger.Printf("%s: Triggered...", p)
+
+	body := bytes.NewBufferString(p.payload)
+	req, err := http.NewRequest(p.method, p.endpoint, body)
+	if err != nil {
+		p.logger.Printf("%s: failed: %v", p, err)
+		p.prom.WithLabelValues(p.endpoint, "false").Inc() // Record error as success=false
+		return err
+	}
+	res, err := p.client.Do(req)
+	if err != nil {
+		p.logger.Printf("%s: failed: %v", p, err)
+		p.prom.WithLabelValues(p.endpoint, "false").Inc() // Record error as success=false
+		return err
+	}
+
+	probeResult := &Result{
+		Timestamp: time.Now(),
+		Probe:     p,
+		Code:      res.StatusCode,
+		Headers:   res.Header,
+	}
+
+	p.logger.Printf("%s: Completed", p)
+	p.prom.WithLabelValues(p.endpoint, fmt.Sprintf("%t", p.success.Check(probeResult))).Inc()
+
 	return nil
 }
 
