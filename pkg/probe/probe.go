@@ -3,13 +3,14 @@ package probe
 import (
 	"bytes"
 	"fmt"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/sirupsen/logrus"
 	"log"
 	"net/http"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/sirupsen/logrus"
 )
 
 // Probe is an abstraction for a set of basic procedures
@@ -29,6 +30,9 @@ type Probe struct {
 	freq     time.Duration
 	ticker   *time.Ticker
 	success  ResultFilter
+
+	failureActions []Action
+	successActions []Action
 
 	logger logrus.StdLogger
 
@@ -123,6 +127,7 @@ func (p *Probe) run() {
 	}
 }
 
+// SetLogger sets the logger for the probe
 func (p *Probe) SetLogger(l logrus.StdLogger) {
 	p.logger = l
 	l.Printf("%s: Set logger", p)
@@ -149,10 +154,12 @@ func (p *Probe) Stop() error {
 	return nil
 }
 
+// String implements the Stringer interface
 func (p *Probe) String() string {
 	return fmt.Sprintf("Probe<%s '%s' every %s>", p.method, p.endpoint, p.freq)
 }
 
+// Trigger a probe to do a check now
 func (p *Probe) Trigger() error {
 	p.processing.Lock()
 	defer p.processing.Unlock()
@@ -189,7 +196,18 @@ func (p *Probe) Trigger() error {
 	}
 
 	p.logger.Printf("%s: Completed", p)
-	p.prom.WithLabelValues(p.endpoint, fmt.Sprintf("%t", p.success.Check(probeResult))).Inc()
+
+	if p.success.Check(probeResult) {
+		p.prom.WithLabelValues(p.endpoint, "true").Inc()
+		for _, a := range p.successActions {
+			a(*probeResult)
+		}
+	} else {
+		p.prom.WithLabelValues(p.endpoint, "false").Inc()
+		for _, a := range p.failureActions {
+			a(*probeResult)
+		}
+	}
 
 	return nil
 }

@@ -1,6 +1,6 @@
 # Alien
 
-Alien probes your endpoints, and exposes probe results as Prometheus metrics.
+*Alien probes your endpoints (and exposes probe results as Prometheus metrics)*
 
 ## License
 

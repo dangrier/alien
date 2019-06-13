@@ -2,19 +2,19 @@ package alien
 
 import (
 	"fmt"
-	"github.com/dangrier/alien/pkg/probe"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/sirupsen/logrus"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"time"
+
+	"github.com/dangrier/alien/pkg/probe"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/sirupsen/logrus"
 )
 
-// Alien is the controller for all the probes
-// which are configured to run.
+// Alien is the controller for a set of configured probes
 type Alien struct {
 	init       bool
 	probes     map[*probe.Probe]bool
@@ -91,6 +91,8 @@ func (a *Alien) Run() {
 		return
 	}
 
+	a.listenForTermination()
+
 	a.logger.Printf("Starting metrics handler %s:%d%s...", a.metricsAddress, a.metricsPort, a.metricsEndpoint)
 	http.Handle(a.metricsEndpoint, promhttp.Handler())
 	srv := http.Server{
@@ -108,7 +110,7 @@ func (a *Alien) Run() {
 			srv.Close()
 
 			a.processing.Lock()
-			for p, _ := range a.probes {
+			for p := range a.probes {
 				p.Stop()
 			}
 			a.processing.Unlock()
@@ -117,15 +119,16 @@ func (a *Alien) Run() {
 	}
 }
 
+// SetLogger sets the logger to use for all its probe logs
 func (a *Alien) SetLogger(l logrus.StdLogger) {
 	a.logger = l
 	l.Println("Set logger for alien")
 }
 
-// ListenForTermination opens a new goroutine which
+// listenForTermination opens a new goroutine which
 // waits for an os.Kill or os.Interrupt and when received
 // sends a value on the stop channel, which gracefully exits
-func (a *Alien) ListenForTermination() {
+func (a *Alien) listenForTermination() {
 	go func() {
 		ch := make(chan os.Signal)
 		signal.Notify(ch, os.Kill, os.Interrupt)

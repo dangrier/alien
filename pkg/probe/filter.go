@@ -15,6 +15,7 @@ type ResultFilter interface {
 // FilterResponseCode filters on a response Code equaling the int
 type FilterResponseCode int
 
+// String implements the Stringer interface
 func (f FilterResponseCode) String() string {
 	return fmt.Sprintf("<ResponseCode=%d>", f)
 }
@@ -43,15 +44,16 @@ type FilterGroupAll struct {
 	Members []ResultFilter
 }
 
+// String implements the Stringer interface
 func (f FilterGroupAll) String() string {
 	return fmt.Sprintf("&(%s)", f.Members)
 }
 
 // Check is true when all the member ResultFilter
 // checks are true
-func (fg FilterGroupAll) Check(res *Result) bool {
+func (f FilterGroupAll) Check(res *Result) bool {
 	// Check that **ALL** member filters are true
-	for _, x := range fg.Members {
+	for _, x := range f.Members {
 		if !x.Check(res) {
 			return false
 		}
@@ -65,15 +67,16 @@ type FilterGroupAny struct {
 	Members []ResultFilter
 }
 
+// String implements the Stringer interface
 func (f FilterGroupAny) String() string {
 	return fmt.Sprintf("|(%s)", f.Members)
 }
 
 // Check is true when any of the member ResultFilter
 // checks are true
-func (fg FilterGroupAny) Check(res *Result) bool {
+func (f FilterGroupAny) Check(res *Result) bool {
 	// Check that **ANY** member filters are true
-	for _, x := range fg.Members {
+	for _, x := range f.Members {
 		if x.Check(res) {
 			return true
 		}
@@ -89,11 +92,12 @@ type FilterGroupNot struct {
 	Member ResultFilter
 }
 
+// String implements the Stringer interface
 func (f FilterGroupNot) String() string {
 	return fmt.Sprintf("!(%s)", f.Member)
 }
 
-// FilterGroupNot is true when the member checks false
-func (fg FilterGroupNot) Check(res *Result) bool {
-	return !fg.Member.Check(res)
+// Check is true when the member checks false
+func (f FilterGroupNot) Check(res *Result) bool {
+	return !f.Member.Check(res)
 }
